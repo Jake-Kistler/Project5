@@ -11,9 +11,11 @@
 #include <pthread.h>
 #include "ThreadNode.h"
 
-int main(int argv [], char argv *[]){
+void *compute_terminate(void *arg);
+
+int main(int argv, char *argv []){
     // step 1: read input from the file
-    int tree_height, int array_size;
+    int tree_height, array_size;
     std::cin >> tree_height >> array_size;
 
     // step 2: calculate things about the tree
@@ -59,4 +61,67 @@ int main(int argv [], char argv *[]){
         thread_args[i].result_array = result_array;
     }
 
+}
+
+void *compute_terminate(void *arg){
+    ThreadNode *node = static_cast<ThreadNode *>(arg);
+
+    // phase 1: wait for the signal
+    pthread_mutex_lock(&node->compuation_mutex);
+    while(!node->compute_ready){
+        pthread_cond_wait(&node->compuation_condition, &node->compuation_mutex);
+    }
+
+    pthread_mutex_unlock(&node->compuation_mutex);
+
+    pthread_t tread_id = pthread_self();
+    int index = node->index;
+
+    // computation phase
+    if(node->is_leaf){
+        int sum = 0;
+        for(int i = node->start_index; i <= node->end_index; i++){
+            sum += node->input_array[i];
+        }
+
+        node->result_array[index] = sum;
+
+        
+        std::cout << "[Thread Index " << idx << "] [Level " << node->level
+        << ", Position " << node->position << "] [TID " << tid
+        << "] computed leaf sum: " << sum << std::endl;
+    } // END IF
+    else{
+        int left = 2 * index + 1;
+        int right = 2 * index + 2;
+
+        // wait on the children
+        while(node->result_array[left] == -1 || node->result_array[right] == -1){
+            usleep(1000);
+        }
+
+        int left_sum = node->result_array[left];
+        int right_sum = node->result_array[right];
+        node->result_array[index] = left_sum + right_sum;
+
+        std::cout << "[Thread Index " << idx << "] [Level " << node->level
+        << ", Position " << node->position << "] [TID " << tid << "] received:\n"
+        << "  Left child [Index " << left << "]: " << leftVal << "\n"
+        << "  Right child [Index " << right << "]: " << rightVal << "\n"
+        << "[Thread Index " << idx << "] computed sum: " << node->results[idx] << std::endl;
+    } // end else
+
+    // phase 2: wait for the termination
+    pthread_mutex_lock(&node->termination_mutex);
+
+    while(!node->terminate_ready){
+        pthread_cond_wait(&node->termination_condition, &node->termination_mutex);
+    }
+
+    pthread_mutex_unlock(&node->termination_mutex);
+
+    std::cout << "[Thread Index " << idx << "] [Level " << node->level
+    << ", Position " << node->position << "] terminated." << std::endl;
+
+    return nullptr;
 }
