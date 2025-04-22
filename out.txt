@@ -1,0 +1,14 @@
+[Thread Index 1] [Level 2, Position 0] [TID 139651057989312] computed leaf sum: 98
+[Thread Index 0] [Level 1, Position 0] [TID 139651066382016] received:
+Left Child [Index 1, Level 2, Position 0, TID 139651057989312]: 98
+Right Child [Index 2, Level 2, Position 1, TID 139651049596608]: 211
+[Thread Index 0] computed final sum: 309
+
+[Thread Index 0] now initiates tree cleanup.
+
+[Thread Index 2] [Level 2, Position 1] [TID 139651049596608] computed leaf sum: 211
+
+[Root] Final sum: 309
+[Thread Index 1] [Level 2, Position 0] terminated.
+[Thread Index 2] [Level 2, Position 1] terminated.
+[Thread Index 0] [Level 1, Position 0] terminated.

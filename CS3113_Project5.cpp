@@ -1,127 +1,228 @@
-// This project acts us to calculate the sum of an INT array using threads that re in a binary tree 
-// For input we get the height of the tree
-// The size of the array (numbers of input elements)
-// The ints themselve
-// Need to calculate the number of leaf nodes 
-// detemine if we can divide by the tree height
-// IF NOT: Pad 0's to make it so we can do this division
-// with this value we can pass off N sized sub arrays to the threads
+// Jake Austin Kistler
+// University of Oklahoma
+// Intro to Operating systems
+// project 5, working with threads, my bread and butter in personal projects although they are in Rust
+// Feature me, ! Remember the extra compiler 
+
 
 #include <iostream>
-#include <pthread.h>
+#include <unistd.h>         // for usleep (The pole function)
+#include <vector>
 #include "ThreadNode.h"
 
-void *compute_terminate(void *arg);
+// coding style has changed to what I have been forced to adopt both in professional work and in my software engineering class :(
 
-int main(int argv, char *argv []){
-    // step 1: read input from the file
+// As a note, pthread accepts void pointer args that have to be explicty (meaning static casted) into other types
+// the same goes for the retun types of functions that use pthreads 
+
+
+// Each function will run this function
+void* compute_terminate(void* arg) {
+    ThreadContext* context = static_cast<ThreadContext*>(arg);
+    ThreadNode* node = &context->all_nodes[context->index];
+
+    ThreadNode* all_nodes = context->all_nodes;
+
+    int idx = node->index;
+    pthread_t tid = pthread_self();
+
+    // Phase 1: Wait to be signaled to compute
+    pthread_mutex_lock(&node->compute_mutex);
+    while (!node->compute_ready)
+        pthread_cond_wait(&node->compute_cond, &node->compute_mutex);
+
+    pthread_mutex_unlock(&node->compute_mutex);
+
+    // compute the sum here
+    if (node->is_leaf) {
+        int sum = 0;
+        for (int i = node->start; i <= node->end; ++i)
+            sum += node->input_array[i];
+
+        node->result_array[idx] = sum;
+        if (idx == 0) {
+            std::cout << "[Thread Index " << idx << "] computed final sum: " << node->result_array[idx] << std::endl;
+            std::cout << "\n[Thread Index " << idx << "] now initiates tree cleanup.\n" << std::endl;
+        } 
+        else {
+            std::cout << "[Thread Index " << idx << "] [Level " << node->level
+            << ", Position " << node->position << "] [TID " << tid
+            << "] computed leaf sum: " << sum << std::endl;
+  
+        }
+        
+    } 
+    else {
+        // we've hit the first node and now we have to wait for the children to finish 
+        int left = 2 * idx + 1;
+        int right = 2 * idx + 2;
+
+        while (node->result_array[left] == -1 || node->result_array[right] == -1)
+            usleep(1000); // polling here
+
+        int leftVal = node->result_array[left];
+        int rightVal = node->result_array[right];
+        node->result_array[idx] = leftVal + rightVal;
+
+        std::cout << "[Thread Index " << idx << "] [Level " << node->level
+        << ", Position " << node->position << "] [TID " << tid << "] received:\n";
+
+        std::cout << "Left Child [Index " << left
+        << ", Level " << all_nodes[left].level
+        << ", Position " << all_nodes[left].position
+        << ", TID " << all_nodes[left].thread
+        << "]: " << leftVal << std::endl;
+
+        std::cout << "Right Child [Index " << right
+        << ", Level " << all_nodes[right].level
+        << ", Position " << all_nodes[right].position
+        << ", TID " << all_nodes[right].thread
+        << "]: " << rightVal << std::endl;
+
+        if (idx == 0) {
+            std::cout << "[Thread Index " << idx << "] computed final sum: " << node->result_array[idx] << std::endl;
+            std::cout << "\n[Thread Index " << idx << "] now initiates tree cleanup.\n" << std::endl;
+        } else {
+            std::cout << "[Thread Index " << idx << "] computed sum: " << node->result_array[idx] << std::endl;
+        }
+
+    }
+
+    // Phase 2: Wait for termination signal
+    pthread_mutex_lock(&node->terminate_mutex);
+    while (!node->terminate_ready)
+        pthread_cond_wait(&node->terminate_cond, &node->terminate_mutex);
+
+    pthread_mutex_unlock(&node->terminate_mutex);
+
+    // Signal children and wait for them if internal node
+    if (!node->is_leaf) {
+        int left = 2 * idx + 1;
+        int right = 2 * idx + 2;
+
+        // Signal left child
+        pthread_mutex_lock(&all_nodes[left].terminate_mutex);
+        all_nodes[left].terminate_ready = true;
+
+        pthread_cond_signal(&all_nodes[left].terminate_cond);
+        pthread_mutex_unlock(&all_nodes[left].terminate_mutex);
+
+        // Signal right child
+        pthread_mutex_lock(&all_nodes[right].terminate_mutex);
+        all_nodes[right].terminate_ready = true;
+
+        pthread_cond_signal(&all_nodes[right].terminate_cond);
+        pthread_mutex_unlock(&all_nodes[right].terminate_mutex);
+
+        // Join children
+        pthread_join(all_nodes[left].thread, nullptr);
+        pthread_join(all_nodes[right].thread, nullptr);
+    }
+
+    std::cout << "[Thread Index " << idx << "] [Level " << node->level
+              << ", Position " << node->position << "] terminated." << std::endl;
+
+    delete context;
+    return nullptr;
+}
+
+
+int main() {
     int tree_height, array_size;
     std::cin >> tree_height >> array_size;
 
-    // step 2: calculate things about the tree
-    array_size = pow(2, tree_height) - 1; // this is the number of leaf nodes
+    int leaf_nodes = 1 << (tree_height - 1); // 2^tree height -1 
+    int total_threads = (1 << tree_height) - 1; // also the total number of nodes in the tree
 
-    int leaf_nodes = 1 << (tree_height - 1); // this is the number of leaf nodes
-    int total_threads = (1 << tree_height) -1; // total threads in the tree
+    // Pad array so it's divisible by leaf count
+    int padded_size = array_size;
 
-    // check for 0 padding for the array
-    int padding = array_size;
-    if(array_size % tree_height != 0){
-        padding = ((array_size / tree_height) + 1) * leaf_nodes;
+    if (array_size % leaf_nodes != 0) {
+        padded_size = ((array_size / leaf_nodes) + 1) * leaf_nodes;
     }
 
-    int *input_array = new int[padding]; // the input array
+    // create the array
+    int* input_array = new int[padded_size];
 
-    // populate the input array (WE NEED THIS FILE BUT FOR NOW I WILL USE 10 user numbers)
-    int value_to_read = 0;
-    while(value_to_read < 10){
-        std::cin >> input_array[value_to_read];
-        value_to_read++;
+    // read in input from the file
+    for (int i = 0; i < array_size; ++i) {
+        std::cin >> input_array[i];
     }
 
-    for(int i = array_size; i < padding; i++){
-        input_array[i] = 0; // pad the array with 0's
+
+    for (int i = array_size; i < padded_size; ++i) {
+        input_array[i] = 0;
     }
 
-    int chunk_size = padding / leaf_nodes;
-    int *result_array = new int[total_threads];
+    int chunk_size = padded_size / leaf_nodes;
+    int* result_array = new int[total_threads];
 
-    for(int i = 0; i < total_threads; i++){
-        result_array[i] = 0; // initialize the result array
-    }
+    for (int i = 0; i < total_threads; ++i)
+        result_array[i] = -1;
 
-    ThreadNode *thread_args = new ThreadNode[total_threads]; // the thread arguments
-    
-    // loop to build the thread arg 
-    for(int i = 0; i < total_threads; i++){
+    // create thread nodes and set the fields
+    ThreadNode* thread_args = new ThreadNode[total_threads];
+
+    for (int i = 0; i < total_threads; ++i) {
         thread_args[i].index = i;
         thread_args[i].level = get_level(i);
         thread_args[i].position = get_position(i);
         thread_args[i].input_array = input_array;
         thread_args[i].result_array = result_array;
-    }
 
-}
+        // building the leafs
+        if (i >= leaf_nodes - 1) {
+            int leaf_index = i - (leaf_nodes - 1);
+            thread_args[i].is_leaf = true;
 
-void *compute_terminate(void *arg){
-    ThreadNode *node = static_cast<ThreadNode *>(arg);
-
-    // phase 1: wait for the signal
-    pthread_mutex_lock(&node->compuation_mutex);
-    while(!node->compute_ready){
-        pthread_cond_wait(&node->compuation_condition, &node->compuation_mutex);
-    }
-
-    pthread_mutex_unlock(&node->compuation_mutex);
-
-    pthread_t tread_id = pthread_self();
-    int index = node->index;
-
-    // computation phase
-    if(node->is_leaf){
-        int sum = 0;
-        for(int i = node->start_index; i <= node->end_index; i++){
-            sum += node->input_array[i];
+            thread_args[i].start = leaf_index * chunk_size;
+            thread_args[i].end = (leaf_index + 1) * chunk_size - 1;
         }
 
-        node->result_array[index] = sum;
-
-        
-        std::cout << "[Thread Index " << idx << "] [Level " << node->level
-        << ", Position " << node->position << "] [TID " << tid
-        << "] computed leaf sum: " << sum << std::endl;
-    } // END IF
-    else{
-        int left = 2 * index + 1;
-        int right = 2 * index + 2;
-
-        // wait on the children
-        while(node->result_array[left] == -1 || node->result_array[right] == -1){
-            usleep(1000);
-        }
-
-        int left_sum = node->result_array[left];
-        int right_sum = node->result_array[right];
-        node->result_array[index] = left_sum + right_sum;
-
-        std::cout << "[Thread Index " << idx << "] [Level " << node->level
-        << ", Position " << node->position << "] [TID " << tid << "] received:\n"
-        << "  Left child [Index " << left << "]: " << leftVal << "\n"
-        << "  Right child [Index " << right << "]: " << rightVal << "\n"
-        << "[Thread Index " << idx << "] computed sum: " << node->results[idx] << std::endl;
-    } // end else
-
-    // phase 2: wait for the termination
-    pthread_mutex_lock(&node->termination_mutex);
-
-    while(!node->terminate_ready){
-        pthread_cond_wait(&node->termination_condition, &node->termination_mutex);
+        // Wrap args in a context object so thread can access all_nodes
+        ThreadContext* context = new ThreadContext{thread_args, i};
+        pthread_create(&thread_args[i].thread, nullptr, compute_terminate, context);
     }
 
-    pthread_mutex_unlock(&node->termination_mutex);
+    // Phase 1: signal leaf threads
+    for (int i = leaf_nodes - 1; i < total_threads; ++i) {
+        pthread_mutex_lock(&thread_args[i].compute_mutex);
+        thread_args[i].compute_ready = true;
 
-    std::cout << "[Thread Index " << idx << "] [Level " << node->level
-    << ", Position " << node->position << "] terminated." << std::endl;
+        pthread_cond_signal(&thread_args[i].compute_cond);
+        pthread_mutex_unlock(&thread_args[i].compute_mutex);
+    }
 
-    return nullptr;
+    // Then signal internal threads
+    for (int i = leaf_nodes - 2; i >= 0; --i) {
+        pthread_mutex_lock(&thread_args[i].compute_mutex);
+        thread_args[i].compute_ready = true;
+
+        pthread_cond_signal(&thread_args[i].compute_cond);
+        pthread_mutex_unlock(&thread_args[i].compute_mutex);
+    }
+
+    // Wait for root result
+    while (result_array[0] == -1)
+        usleep(1000); // again polling
+
+    std::cout << "\n[Root] Final sum: " << result_array[0] << std::endl;
+
+    // Phase 2: signal root for termination (the rest is handled recursively)
+    pthread_mutex_lock(&thread_args[0].terminate_mutex);
+    thread_args[0].terminate_ready = true;
+
+    pthread_cond_signal(&thread_args[0].terminate_cond);
+    pthread_mutex_unlock(&thread_args[0].terminate_mutex);
+
+    // wait for the entire tree to finish
+    pthread_join(thread_args[0].thread, nullptr);
+
+    // like a good c programmer clean up and reclaim all the memory we used
+    delete[] input_array;
+    delete[] result_array;
+    delete[] thread_args;
+
+    return 0;
 }
+
