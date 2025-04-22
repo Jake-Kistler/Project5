@@ -9,6 +9,7 @@
 
 #include <iostream>
 #include <pthread.h>
+#include "ThreadNode.h"
 
 int main(int argv [], char argv *[]){
     // step 1: read input from the file
